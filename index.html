@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>집중 타이머</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Malgun Gothic", sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #17212b; color: #f4efd9;
+    }
+    main { width: min(88vw, 420px); text-align: center; }
+    h1 { margin: 0 0 2rem; font-size: clamp(1.4rem, 5vw, 2rem); font-weight: 600; }
+    .dial {
+      --progress: 0turn;
+      width: min(76vw, 320px); aspect-ratio: 1; margin: auto;
+      display: grid; place-items: center; border-radius: 50%;
+      background: conic-gradient(#e95d45 var(--progress), #33414e 0);
+      box-shadow: 0 1.5rem 4rem #0b111880;
+    }
+    .face {
+      width: calc(100% - 14px); aspect-ratio: 1; display: grid; place-content: center;
+      border-radius: 50%; background: #f4efd9; color: #17212b;
+    }
+    time { font: 700 clamp(4rem, 20vw, 6.5rem)/1 Georgia, serif; letter-spacing: -.06em; }
+    #status { min-height: 1.5em; margin: 1rem 0 1.5rem; color: #b8c4cc; }
+    .summary {
+      display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 1.5rem;
+      border-block: 1px solid #52616d;
+    }
+    .summary > * { padding: .8rem; }
+    .summary > * + * { border-left: 1px solid #52616d; }
+    .duration, output { display: grid; gap: .4rem; color: #b8c4cc; }
+    output strong { color: #f4efd9; font-size: 1.2rem; }
+    .adjustments { display: grid; grid-template-columns: repeat(4, 1fr); gap: .25rem; }
+    .adjustments button {
+      min-width: 0; padding: .35rem .2rem; border: 1px solid #71808c;
+      border-radius: .35rem; background: transparent; color: #f4efd9; font-size: .85rem;
+    }
+    .controls { display: flex; justify-content: center; gap: .75rem; }
+    button {
+      min-width: 7rem; padding: .85rem 1.2rem; border: 2px solid #f4efd9;
+      border-radius: 99px; background: #f4efd9; color: #17212b;
+      font: inherit; font-weight: 700; cursor: pointer;
+    }
+    .controls button:last-child { background: transparent; color: #f4efd9; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button:focus-visible { outline: 3px solid #e95d45; outline-offset: 4px; }
+    @media (max-width: 360px) { .controls { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>지금 할 일 하나에 집중하기</h1>
+    <div class="dial" id="dial">
+      <div class="face"><time id="clock" datetime="PT25M">25:00</time></div>
+    </div>
+    <p id="status" aria-live="polite">25분 집중을 시작해 보세요.</p>
+    <div class="summary">
+      <section class="duration" aria-labelledby="duration-label">
+        <span id="duration-label">시간 조정</span>
+        <div class="adjustments">
+          <button type="button" data-minutes="-5" aria-label="집중 시간 5분 줄이기">−5</button>
+          <button type="button" data-minutes="-1" aria-label="집중 시간 1분 줄이기">−1</button>
+          <button type="button" data-minutes="1" aria-label="집중 시간 1분 늘리기">+1</button>
+          <button type="button" data-minutes="5" aria-label="집중 시간 5분 늘리기">+5</button>
+        </div>
+      </section>
+      <output>오늘 완료<strong><span id="completed">0</span>회</strong></output>
+    </div>
+    <div class="controls">
+      <button id="toggle">시작</button>
+      <button id="reset">초기화</button>
+    </div>
+  </main>
+
+  <script>
+    let total = 25 * 60;
+    let remaining = total, endAt, timer;
+    const clock = document.querySelector('#clock');
+    const dial = document.querySelector('#dial');
+    const status = document.querySelector('#status');
+    const toggle = document.querySelector('#toggle');
+    const completed = document.querySelector('#completed');
+    const adjustButtons = [...document.querySelectorAll('[data-minutes]')];
+    const storageKey = 'focus-timer-completed';
+    const today = new Date().toDateString();
+    let audioContext;
+
+    function loadCount() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey));
+        return saved?.date === today && Number.isInteger(saved.count) ? saved.count : 0;
+      } catch { return 0; }
+    }
+
+    let count = loadCount();
+
+    function format(seconds) {
+      return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+
+    function clampSeconds(seconds) {
+      return Math.min(120 * 60, Math.max(60, seconds));
+    }
+
+    function enableAdjustments(enabled) {
+      adjustButtons.forEach(button => button.disabled = !enabled);
+    }
+
+    function enableSound() {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) (audioContext ??= new AudioContext()).resume();
+    }
+
+    function playDoneSound() {
+      if (!audioContext) return;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.frequency.value = 660;
+      gain.gain.setValueAtTime(.12, audioContext.currentTime);
+      gain.gain.exponentialRampToValueAtTime(.001, audioContext.currentTime + .25);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(); oscillator.stop(audioContext.currentTime + .25);
+    }
+
+    function saveCount() {
+      try { localStorage.setItem(storageKey, JSON.stringify({ date: today, count })); }
+      catch { /* 기록 실패가 완료 처리를 막지 않는다. */ }
+    }
+
+    function render() {
+      clock.textContent = format(remaining);
+      clock.dateTime = `PT${remaining}S`;
+      dial.style.setProperty('--progress', `${(total - remaining) / total}turn`);
+      document.title = `${format(remaining)} · 집중 타이머`;
+    }
+
+    function tick() {
+      remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+      render();
+      if (!remaining) {
+        clearInterval(timer); timer = null;
+        count += 1;
+        saveCount(); playDoneSound();
+        completed.textContent = count;
+        toggle.textContent = '다시 시작'; status.textContent = '집중 완료! 잠깐 쉬어가세요.';
+      }
+    }
+
+    toggle.addEventListener('click', () => {
+      if (timer) {
+        clearInterval(timer); timer = null;
+        enableAdjustments(true);
+        toggle.textContent = '계속'; status.textContent = '일시정지했습니다.';
+      } else {
+        if (!remaining) remaining = total;
+        enableSound(); enableAdjustments(false);
+        endAt = Date.now() + remaining * 1000;
+        timer = setInterval(tick, 250);
+        toggle.textContent = '일시정지'; status.textContent = '집중하는 중입니다.';
+        tick();
+      }
+    });
+
+    document.querySelector('#reset').addEventListener('click', () => {
+      clearInterval(timer); timer = null; remaining = total;
+      enableAdjustments(true);
+      toggle.textContent = '시작'; status.textContent = `${format(total)} 집중을 시작해 보세요.`; render();
+    });
+
+    adjustButtons.forEach(button => button.addEventListener('click', () => {
+      remaining = clampSeconds(remaining + Number(button.dataset.minutes) * 60);
+      total = remaining;
+      status.textContent = `${format(remaining)}으로 조정했습니다.`; render();
+    }));
+
+    console.assert(format(0) === '00:00' && format(1500) === '25:00', '시간 표시 확인 실패');
+    console.assert(clampSeconds(0) === 60 && clampSeconds(99999) === 7200, '시간 범위 확인 실패');
+    completed.textContent = count;
+    render();
+  </script>
+</body>
+</html>
