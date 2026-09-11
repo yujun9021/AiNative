@@ -13,6 +13,7 @@
 
 - `intent`, `spec`, `plan`: `draft` 또는 `approved`
 - `evidence`: `draft`, `review`(사용자 인수 전), 또는 `done`(사용자 인수 후)
+- ROADMAP 구성 승인: `pending` 또는 `approved`
 - ROADMAP 작업: `pending`, `building`, `review`, 또는 `done`
 
 ## 작업 경계
